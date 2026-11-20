@@ -4,7 +4,7 @@
 # Network Volume mounted at /runpod-volume (see extra_model_paths.yaml),
 # so rebuilding / redeploying the worker does not re-download ~15-35 GB
 # of weights, and the image stays small and cheap to pull on cold start.
-FROM runpod/pytorch:2.8.0-py3.12-cuda12.8.1-devel-ubuntu22.04
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 ENV PYTHONUNBUFFERED=1 \
     COMFY_HOST=127.0.0.1 \
