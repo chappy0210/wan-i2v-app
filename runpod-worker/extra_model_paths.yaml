@@ -1,0 +1,22 @@
+# Map ComfyUI model folders to the RunPod Network Volume.
+# On Serverless the volume mounts at /runpod-volume.
+# IMPORTANT (per RunPod's Wan 2.2 / ComfyUI guide): the Serverless
+# worker-comfyui path map uses the older ComfyUI folder names below --
+# a volume laid out with diffusion_models/ + text_encoders/ (pod template
+# layout) will NOT be found by a Serverless worker.
+#
+# Expected volume layout:
+#   /runpod-volume/models/unet/   <- diffusion models (Wan 2.2 I2V experts)
+#   /runpod-volume/models/clip/   <- text encoder (umt5) + CLIP vision
+#   /runpod-volume/models/vae/    <- Wan VAE
+#   /runpod-volume/models/loras/  <- optional LoRAs (e.g. Lightning)
+runpod_volume:
+  base_path: /runpod-volume/models
+  unet: unet
+  diffusion_models: unet
+  clip: clip
+  text_encoders: clip
+  clip_vision: clip
+  vae: vae
+  loras: loras
+  checkpoints: checkpoints
