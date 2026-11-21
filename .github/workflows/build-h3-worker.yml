@@ -29,4 +29,6 @@ jobs:
         with:
           context: h3-worker
           push: true
-          tags: ghcr.io/chappy0210/h3-cache-worker:latest
+          tags: |
+            ghcr.io/chappy0210/h3-cache-worker:latest
+            ghcr.io/chappy0210/h3-cache-worker:v2
