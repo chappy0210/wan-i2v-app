@@ -110,17 +110,49 @@ def check_prompt_allowed(prompt: str) -> str | None:
 # ComfyUI helpers
 # ---------------------------------------------------------------------------
 
-def wait_for_comfy(timeout_sec: int = 240) -> None:
-    deadline = time.time() + timeout_sec
+def wait_for_comfy(timeout_sec: int = 240) -> float:
+    """Wait for ComfyUI to answer; return how many seconds it took."""
+    started = time.time()
+    deadline = started + timeout_sec
+    last_problem = "no response yet"
     while time.time() < deadline:
         try:
             r = requests.get(f"{COMFY_BASE}/system_stats", timeout=5)
             if r.status_code == 200:
-                return
-        except requests.RequestException:
-            pass
+                return time.time() - started
+            last_problem = f"HTTP {r.status_code}"
+        except requests.RequestException as e:
+            last_problem = f"{type(e).__name__}: {e}"
         time.sleep(3)
-    raise RuntimeError("ComfyUI did not become ready in time")
+    raise RuntimeError(
+        f"ComfyUI did not become ready in {timeout_sec}s (last problem: {last_problem})"
+    )
+
+
+EXPECTED_UNET = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+
+
+def check_models_available() -> None:
+    """Fail fast (and informatively) if the cached H3 weights are not
+    visible to ComfyUI, instead of hanging inside a generation."""
+    try:
+        r = requests.get(f"{COMFY_BASE}/object_info/UNETLoader", timeout=30)
+        r.raise_for_status()
+        info = r.json()
+        options = (
+            info.get("UNETLoader", {})
+            .get("input", {})
+            .get("required", {})
+            .get("unet_name", [[]])[0]
+        )
+    except Exception as e:  # noqa: BLE001 - report and let generation try anyway
+        print(f"model check skipped: {e}", flush=True)
+        return
+    if EXPECTED_UNET not in options:
+        raise RuntimeError(
+            f"H3 diffusion model not visible to ComfyUI: expected "
+            f"{EXPECTED_UNET!r}, UNETLoader offers: {options}"
+        )
 
 
 def upload_image(image_bytes: bytes, filename: str) -> str:
@@ -169,17 +201,57 @@ def patch_workflow(workflow: dict, job_input: dict, image_name: str) -> dict:
     return wf
 
 
-def queue_and_wait(workflow: dict) -> dict:
+def _queue_snapshot() -> str:
+    """One-line summary of ComfyUI's queue + device state, for errors."""
+    try:
+        q = requests.get(f"{COMFY_BASE}/queue", timeout=10).json()
+        running = [item[1] for item in q.get("queue_running", [])]
+        pending = [item[1] for item in q.get("queue_pending", [])]
+        state = f"queue running={running} pending={pending}"
+    except Exception as e:  # noqa: BLE001
+        state = f"queue unreadable ({e})"
+    try:
+        stats = requests.get(f"{COMFY_BASE}/system_stats", timeout=10).json()
+        devices = stats.get("devices", [])
+        if devices:
+            d = devices[0]
+            state += (
+                f"; device={d.get('name')} vram_free={d.get('vram_free')} "
+                f"vram_total={d.get('vram_total')}"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    return state
+
+
+def queue_and_wait(workflow: dict) -> tuple[dict, float]:
+    """Queue the workflow; return (outputs, generation_seconds).
+
+    Diagnostics: a rejected prompt raises with ComfyUI's response body
+    (node_errors), and a timeout raises with the live queue/device state,
+    so a failed job explains itself without worker-log access.
+    """
     client_id = str(uuid.uuid4())
     r = requests.post(
         f"{COMFY_BASE}/prompt",
         json={"prompt": workflow, "client_id": client_id},
         timeout=60,
     )
-    r.raise_for_status()
-    prompt_id = r.json()["prompt_id"]
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"ComfyUI rejected the prompt (HTTP {r.status_code}): {r.text[:1500]}"
+        )
+    payload = r.json()
+    if payload.get("error") or payload.get("node_errors"):
+        raise RuntimeError(
+            f"ComfyUI rejected the prompt: error={payload.get('error')} "
+            f"node_errors={json.dumps(payload.get('node_errors'))[:1500]}"
+        )
+    prompt_id = payload["prompt_id"]
 
-    deadline = time.time() + MAX_WAIT_SEC
+    started = time.time()
+    deadline = started + MAX_WAIT_SEC
+    last_state = "not polled yet"
     while time.time() < deadline:
         time.sleep(POLL_INTERVAL_SEC)
         h = requests.get(f"{COMFY_BASE}/history/{prompt_id}", timeout=30)
@@ -189,8 +261,12 @@ def queue_and_wait(workflow: dict) -> dict:
             status = history[prompt_id].get("status", {})
             if status.get("status_str") == "error":
                 raise RuntimeError(f"ComfyUI execution error: {status}")
-            return history[prompt_id].get("outputs", {})
-    raise RuntimeError(f"Timed out after {MAX_WAIT_SEC}s waiting for ComfyUI")
+            return history[prompt_id].get("outputs", {}), time.time() - started
+        last_state = _queue_snapshot()
+    raise RuntimeError(
+        f"Timed out after {MAX_WAIT_SEC}s waiting for generation "
+        f"(prompt_id={prompt_id}, last state: {last_state})"
+    )
 
 
 def find_video(outputs: dict, filename_prefix: str) -> str | None:
@@ -301,12 +377,13 @@ def handler(job: dict) -> dict:
         if rejection:
             return {"error": rejection}
 
-        wait_for_comfy()
+        comfy_wait_sec = wait_for_comfy()
+        check_models_available()
         image_bytes = base64.b64decode(cleaned["image"])
         image_name = upload_image(image_bytes, "input.png")
 
         workflow = patch_workflow(load_workflow(cleaned["mode"]), cleaned, image_name)
-        outputs = queue_and_wait(workflow)
+        outputs, generation_sec = queue_and_wait(workflow)
 
         filename = find_video(outputs, cleaned["filename_prefix"])
         if not filename:
@@ -328,6 +405,10 @@ def handler(job: dict) -> dict:
             "filename": filename,
             "seed": cleaned["seed"],
             "format": "mp4",
+            "timing_sec": {
+                "comfy_ready_wait": round(comfy_wait_sec, 1),
+                "generation": round(generation_sec, 1),
+            },
         }
     except Exception as exc:  # Return a clean error instead of crashing the worker.
         return {"error": f"{type(exc).__name__}: {exc}"}
