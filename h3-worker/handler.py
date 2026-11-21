@@ -217,21 +217,45 @@ def find_video(outputs: dict, filename_prefix: str) -> str | None:
 
 
 def download_video(filename: str) -> bytes:
+    # 1) Direct local path (filename may carry a subfolder, e.g. video/...).
     local_path = os.path.join(COMFY_OUTPUT_DIR, filename)
     if os.path.exists(local_path):
         with open(local_path, "rb") as f:
             return f.read()
-    subfolder, _, name = filename.rpartition("/")
-    params = {"filename": name, "type": "output"}
-    if subfolder:
-        params["subfolder"] = subfolder
-    r = requests.get(
-        f"{COMFY_BASE}/view",
-        params=params,
-        timeout=120,
+    # 2) Recursive search by basename anywhere under the output dir.
+    basename = os.path.basename(filename)
+    matches = glob.glob(
+        os.path.join(COMFY_OUTPUT_DIR, "**", basename), recursive=True
     )
-    r.raise_for_status()
-    return r.content
+    if matches:
+        with open(matches[0], "rb") as f:
+            return f.read()
+    # 3) ComfyUI /view, with and without the subfolder parameter.
+    subfolder, _, name = filename.rpartition("/")
+    attempts = []
+    if subfolder:
+        attempts.append({"filename": name, "subfolder": subfolder, "type": "output"})
+    attempts.append({"filename": name, "type": "output"})
+    last_error: Exception | None = None
+    for params in attempts:
+        try:
+            r = requests.get(f"{COMFY_BASE}/view", params=params, timeout=120)
+            r.raise_for_status()
+            return r.content
+        except Exception as e:  # noqa: BLE001 - try the next form
+            last_error = e
+    # 4) Give up, but report what the output dir actually contains so the
+    #    next failure is self-diagnosing from the job error alone.
+    listing = []
+    for root, _dirs, files in os.walk(COMFY_OUTPUT_DIR):
+        for fn in files:
+            listing.append(os.path.relpath(os.path.join(root, fn), COMFY_OUTPUT_DIR))
+        if len(listing) > 50:
+            break
+    raise RuntimeError(
+        f"video file not retrievable: wanted {filename!r}, "
+        f"last /view error: {last_error}, output dir listing: {listing[:50]}"
+    )
 
 
 # ---------------------------------------------------------------------------
