@@ -33,3 +33,4 @@ jobs:
             ghcr.io/chappy0210/h3-cache-worker:latest
             ghcr.io/chappy0210/h3-cache-worker:v2
             ghcr.io/chappy0210/h3-cache-worker:v3
+            ghcr.io/chappy0210/h3-cache-worker:v4
