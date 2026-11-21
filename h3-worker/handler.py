@@ -194,17 +194,25 @@ def queue_and_wait(workflow: dict) -> dict:
 
 
 def find_video(outputs: dict, filename_prefix: str) -> str | None:
-    """Find the produced video filename from history outputs, falling back
-    to scanning the output directory for our filename prefix."""
+    """Find the produced video as a path relative to the output dir.
+
+    The workflow's SaveVideo filename_prefix contains a folder
+    ("video/h3_..."), so history items carry the file's folder in a
+    separate "subfolder" field. The bare filename alone cannot locate
+    the file (learned from a 404 on /view in the first endpoint test),
+    so always carry the subfolder along.
+    """
     for node_output in outputs.values():
         for key in ("gifs", "videos", "images"):
             for item in node_output.get(key, []) or []:
                 filename = item.get("filename", "")
                 if filename.lower().endswith((".mp4", ".webm")):
-                    return filename
+                    subfolder = item.get("subfolder", "")
+                    return os.path.join(subfolder, filename) if subfolder else filename
     candidates = glob.glob(os.path.join(COMFY_OUTPUT_DIR, filename_prefix + "*.mp4"))
     if candidates:
-        return os.path.basename(max(candidates, key=os.path.getmtime))
+        newest = max(candidates, key=os.path.getmtime)
+        return os.path.relpath(newest, COMFY_OUTPUT_DIR)
     return None
 
 
@@ -213,9 +221,13 @@ def download_video(filename: str) -> bytes:
     if os.path.exists(local_path):
         with open(local_path, "rb") as f:
             return f.read()
+    subfolder, _, name = filename.rpartition("/")
+    params = {"filename": name, "type": "output"}
+    if subfolder:
+        params["subfolder"] = subfolder
     r = requests.get(
         f"{COMFY_BASE}/view",
-        params={"filename": filename, "type": "output"},
+        params=params,
         timeout=120,
     )
     r.raise_for_status()
