@@ -18,9 +18,11 @@ WORKDIR /app
 
 # --- ComfyUI -------------------------------------------------------------
 # MiniMax H3 nodes require a recent ComfyUI (>= 0.30; the Pod benchmark
-# used 0.44.0). TODO(pin): pin COMFYUI_REF to a tested tag after the
-# first successful endpoint test instead of tracking master.
-ARG COMFYUI_REF=master
+# used 0.44.0). Pinned to the benchmark-proven tag v0.44.0: tracking
+# master meant every image build silently changed the ComfyUI version,
+# and the endpoint tests built on later masters (tests 3-4) hung inside
+# generation while the earlier build completed. Do not unpin casually.
+ARG COMFYUI_REF=v0.44.0
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /comfyui \
     && cd /comfyui && git checkout ${COMFYUI_REF} \
     && pip install --no-cache-dir -r requirements.txt
