@@ -1,0 +1,32 @@
+name: Build H3 cache worker image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "h3-worker/**"
+      - ".github/workflows/build-h3-worker.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: h3-worker
+          push: true
+          tags: ghcr.io/chappy0210/h3-cache-worker:latest
