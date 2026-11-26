@@ -1,0 +1,48 @@
+name: Build Qwen caption worker v1 image
+
+# NOTE: this file currently lives in qwen-caption-worker/ for review.
+# To deploy, it must ALSO be placed at the repo root:
+# .github/workflows/build-qwen-caption-worker.yml
+# (GitHub Actions only runs workflows from that directory).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "qwen-caption-worker/**"
+      - ".github/workflows/build-qwen-caption-worker.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up disk space (the CUDA base image is ~10 GB)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: qwen-caption-worker
+          push: true
+          tags: |
+            ghcr.io/chappy0210/qwen-caption-worker:v1
