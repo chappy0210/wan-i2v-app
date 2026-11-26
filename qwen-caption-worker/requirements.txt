@@ -1,0 +1,11 @@
+# Qwen caption worker dependencies.
+# torch is NOT listed: the runpod/pytorch base image already ships
+# torch 2.8.0 (CUDA 12.8), and pinning it here would needlessly grow
+# the image. transformers is pinned to the release line that
+# introduced Qwen2.5-VL support (4.49) — do not float this: the
+# model-class name and processor API differ across versions.
+runpod>=1.7.0
+transformers==4.49.0
+accelerate==1.4.0
+qwen-vl-utils==0.0.8
+pillow>=10.0.0
